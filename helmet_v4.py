@@ -315,6 +315,7 @@ class GnssManager:
     def __init__(self):
         import quectel
         self.gnss = None
+        self.gnss_started = False
         self.valid = False
         self.latitude  = 0.0
         self.longitude = 0.0
@@ -334,6 +335,7 @@ class GnssManager:
             return False
         try:
             if self.gnss.start():
+                self.gnss_started = True
                 log('GNSS', '定位模块启动成功，等待卫星信号...')
                 return True
             log('GNSS', '定位模块启动失败')
@@ -1337,13 +1339,13 @@ class HelmetSystem:
           9. 检测按键取消 SOS
         """
         log('THREAD', '单线程系统已启动（采集 + 检测 + 通信合并）')
-        last_acc_ms = 0
-        last_env_time = 0
-        last_gps_time = 0
-        last_upload_time = 0
-        last_reconnect_time = 0
-        last_sos_send_time = 0
-        last_lcd_update = 0
+        last_acc_ms = time.ticks_ms()
+        last_env_time = time.time()
+        last_gps_time = time.time()
+        last_upload_time = time.time()
+        last_reconnect_time = time.time()
+        last_sos_send_time = time.time()
+        last_lcd_update = time.time()
         sos_sms_sent = False
 
         while self.running:
@@ -1368,12 +1370,13 @@ class HelmetSystem:
                         self.shared.update_env(env, light)
                         last_env_time = now
                     
-                    # -- GPS 更新（每 5s 一次） --
+                    # -- GPS 更新（每 5s 一次，GNSS启动失败则跳过） --
                     if now - last_gps_time >= 5:
-                        try:
-                            self.gnss.update()
-                        except Exception as e:
-                            log('GNSS', '更新异常: {}'.format(e))
+                        if self.gnss.gnss_started:
+                            try:
+                                self.gnss.update()
+                            except Exception as e:
+                                log('GNSS', '更新异常: {}'.format(e))
                         last_gps_time = now
 
                     last_acc_ms = now_ms
@@ -1452,14 +1455,17 @@ class HelmetSystem:
                 if self.mqtt and self.mqtt.connected:
                     self.mqtt.check_msg()
 
-                # -- MQTT 断线自动重连（每 30 秒尝试一次） --
-                if not self.mqtt.connected and (now - last_reconnect_time) >= 30:
+                # -- MQTT 断线自动重连（无网络时 120s，有网络时 30s） --
+                if not self.mqtt.connected and (now - last_reconnect_time) >= (120 if not self.mqtt_available else 30):
                     last_reconnect_time = now
-                    log('MQTT', 'MQTT 已断线，尝试重连...')
-                    try:
-                        self.mqtt.connect()
-                    except Exception as e:
-                        log('MQTT', '重连失败: {}'.format(e))
+                    if not self.mqtt_available:
+                        log('MQTT', '网络未就绪，跳过重连')
+                    else:
+                        log('MQTT', 'MQTT 已断线，尝试重连...')
+                        try:
+                            self.mqtt.connect()
+                        except Exception as e:
+                            log('MQTT', '重连失败: {}'.format(e))
 
                 # ============================================================
                 # 3. LCD 更新（主线程处理，避免子线程栈溢出）
