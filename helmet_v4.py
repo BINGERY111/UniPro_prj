@@ -70,8 +70,8 @@ class Config:
     # MQTT 服务器配置
     # ------------------------------------------------------------------
     MQTT_BROKER   = '172.188.83.251'
-    MQTT_PORT     = 44103      # TLS 端口
-    MQTT_PORT_NO_TLS = 42605   # 非 TLS 端口（备用）
+    MQTT_PORT     = 44345      # TLS 端口
+    MQTT_PORT_NO_TLS = 44345   # 非 TLS 端口（备用）
     MQTT_USER     = 'quectel'
     MQTT_PASSWORD = '12345678'
     MQTT_CLIENT_ID = 'helmet_v4_001'
@@ -99,10 +99,10 @@ class Config:
     ENV_INTERVAL      = 2.0    # 环境数据上传 2s
 
     # ------------------------------------------------------------------
-    # 碰撞检测阈值
+    # 碰撞检测阈值（优化：更容易触发碰撞检测）
     # ------------------------------------------------------------------
-    FREE_FALL_THRESHOLD = 0.5   # 失重阈值（g）
-    FREE_FALL_HOLD_MS   = 100  # 失重持续判定时间（毫秒）
+    FREE_FALL_THRESHOLD = 0.6   # 失重阈值（g），降低阈值更容易触发
+    FREE_FALL_HOLD_MS   = 50   # 失重持续判定时间（毫秒），缩短触发时间
     IMPACT_THRESHOLD    = 3.5  # 碰撞冲击阈值（g）
 
     # ------------------------------------------------------------------
@@ -1256,13 +1256,16 @@ class HelmetSystem:
         self.mqtt_available = False
         try:
             if self.mqtt.start_network():
-                # 等待 NTP 时间同步完成
+                # 等待 NTP 时间同步（最多 3 秒，超时继续）
                 log('SYSTEM', '等待 NTP 时间同步...')
-                for _ in range(5):
-                    if int(time.time()) > 1700000000:
-                        log('SYSTEM', 'NTP 时间同步完成')
-                        break
+                ntp_wait = 0
+                while ntp_wait < 3 and int(time.time()) <= 1700000000:
                     time.sleep(1)
+                    ntp_wait += 1
+                if int(time.time()) > 1700000000:
+                    log('SYSTEM', 'NTP 时间同步完成')
+                else:
+                    log('SYSTEM', 'NTP 时间同步超时，继续启动')
                 # 重试 MQTT 连接（最多 2 次，缩短超时）
                 for attempt in range(1, 3):
                     log('MQTT', 'MQTT 连接尝试 {}/2...'.format(attempt))
